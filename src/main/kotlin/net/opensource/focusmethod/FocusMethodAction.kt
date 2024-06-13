@@ -8,9 +8,7 @@ import com.intellij.openapi.editor.FoldingModel
 import com.intellij.psi.PsiManager
 import com.intellij.refactoring.suggested.endOffset
 import com.intellij.refactoring.suggested.startOffset
-import org.jetbrains.uast.UFile
-import org.jetbrains.uast.UMethod
-import org.jetbrains.uast.toUElementOfType
+import org.jetbrains.uast.*
 
 // 15:15
 class FocusMethodAction : AnAction() {
@@ -24,21 +22,30 @@ class FocusMethodAction : AnAction() {
             .classes
             .flatMap { it.methods.toList() }
             .firstOrNull { it.startOffset <= userCaretOffset && userCaretOffset <= it.endOffset } ?: return
-    println(focusMethod.name + " " + focusMethod.startOffset + " " + focusMethod.endOffset)
+
+        val dependantMethodNames: Set<String> = findCalledMethodNames(focusMethod.uastBody)
         val methodsForFolding: List<UMethod> = file
             .classes
             .flatMap { it.methods.toList() }
+            .filter { !dependantMethodNames.contains(it.name) }
             .filter { it.startOffset > userCaretOffset || userCaretOffset > it.endOffset }
-
         val foldingModel: FoldingModel = editor.foldingModel
 
         foldingModel.runBatchFoldingOperation {
             methodsForFolding.forEach {
-                foldingModel.addFoldRegion(it.startOffset, it.endOffset, "folded")?.isExpanded = false
+                foldingModel.addFoldRegion(it.startOffset, it.endOffset, "folded due to focus mode")?.isExpanded = false
             }
         }
+    }
 
-        editor.foldingModel.run {  }
+    private fun findCalledMethodNames(uastBody: UExpression?) : Set<String> {
+        if (uastBody == null || uastBody !is UBlockExpression) {
+            return emptySet()
+        }
 
+        return uastBody.expressions
+            .filterIsInstance<UCallExpression>()
+            .mapNotNull { it.methodName }
+            .toSet()
     }
 }
