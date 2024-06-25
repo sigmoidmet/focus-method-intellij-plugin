@@ -18,12 +18,16 @@ class FocusMethodAction : AnAction() {
         val editor: Editor = event.getRequiredData(CommonDataKeys.EDITOR)
         val file: UFile = PsiManager.getInstance(project).findFile(editor.virtualFile)?.toUElementOfType<UFile>() ?: return
         val userCaretOffset = editor.caretModel.currentCaret.offset
+        val methods: Map<String, UMethod> = file.classes
+            .flatMap { it.methods.toList() }
+            .associateBy { it.name }
+
         val focusMethod: UMethod = file
             .classes
             .flatMap { it.methods.toList() }
             .firstOrNull { it.startOffset <= userCaretOffset && userCaretOffset <= it.endOffset } ?: return
 
-        val dependantMethodNames: Set<String> = findCalledMethodNames(focusMethod.uastBody)
+        val dependantMethodNames: Set<String> = findCalledMethodNames(focusMethod.uastBody, methods)
         val methodsForFolding: List<UMethod> = file
             .classes
             .flatMap { it.methods.toList() }
@@ -33,19 +37,28 @@ class FocusMethodAction : AnAction() {
 
         foldingModel.runBatchFoldingOperation {
             methodsForFolding.forEach {
-                foldingModel.addFoldRegion(it.startOffset, it.endOffset, "folded due to focus mode")?.isExpanded = false
+                (foldingModel.getFoldRegion(it.startOffset, it.endOffset) ?:
+                foldingModel.addFoldRegion(it.startOffset, it.endOffset, "folded due to focus mode"))
+                    ?.isExpanded = false
             }
         }
     }
 
-    private fun findCalledMethodNames(uastBody: UExpression?) : Set<String> {
+    private fun findCalledMethodNames(uastBody: UExpression?,
+                                      methods: Map<String, UMethod>,
+                                      visited: MutableSet<String> = mutableSetOf()) : Set<String> {
         if (uastBody == null || uastBody !is UBlockExpression) {
             return emptySet()
         }
+        visited.add((uastBody.uastParent as UMethod).name)
+
 
         return uastBody.expressions
+            .asSequence()
             .filterIsInstance<UCallExpression>()
             .mapNotNull { it.methodName }
+            .filterNot { visited.contains(it) }
+            .flatMap { findCalledMethodNames(methods[it]?.uastBody, methods, visited) + it }
             .toSet()
     }
 }
